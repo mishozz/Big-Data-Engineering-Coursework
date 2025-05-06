@@ -1,0 +1,11 @@
+id,name,age,date_joined,score,region,status
+1,John Doe,35,2023-01-15,85.5,North,active
+2,Jane Smith,28,2023-02-20,92.3,South,active
+3,Bob Johnson,42,2023-01-10,78.9,East,inactive
+4,Alice Brown,31,2023-03-05,88.7,West,active
+5,Charlie Wilson,45,2023-02-12,76.2,North,pending
+6,Diana Lee,39,2023-01-22,81.4,South,active
+7,Edward Chen,33,2023-03-18,90.1,East,active
+8,Fiona Davis,27,2023-02-05,83.9,West,inactive
+9,George Miller,41,2023-01-30,77.6,North,active
+10,Hannah Wang,36,2023-03-12,86.3,South,pending
