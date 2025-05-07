@@ -1,19 +1,17 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from utils.mongodb_utils import get_mongo_connection
 import pandas as pd
-import pymongo
 import logging
 import os
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Default arguments for the DAG
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -23,7 +21,6 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-# Define the DAG
 dag = DAG(
     'csv_ingestion_pipeline',
     default_args=default_args,
@@ -33,18 +30,7 @@ dag = DAG(
     tags=['csv', 'mongodb', 'ml'],
 )
 
-# Define the path to the CSV file
 CSV_FILE_PATH = '/opt/airflow/data/input.csv'
-
-# MongoDB connection parameters
-MONGO_CONNECTION = {
-    'host': 'mongodb',
-    'port': 27017,
-    'username': 'mongodb_user',
-    'password': 'mongodb_password',
-    'database': 'mldata',
-    'collection': 'processed_data'
-}
 
 def read_csv_file(**kwargs):
     """
@@ -144,47 +130,26 @@ def store_to_mongodb(**kwargs):
         data_list = pd.read_json(processed_data_json).to_dict('records')
         
         logger.info(f"Preparing to store {len(data_list)} records to MongoDB")
-        
-        # Connect to MongoDB
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                client = pymongo.MongoClient(
-                    host=MONGO_CONNECTION['host'],
-                    port=MONGO_CONNECTION['port'],
-                    username=MONGO_CONNECTION['username'],
-                    password=MONGO_CONNECTION['password'],
-                    serverSelectionTimeoutMS=5000  # 5 second timeout
-                )
-                
-                # Check connection
-                client.server_info()
-                logger.info("Successfully connected to MongoDB")
-                
-                # Select database and collection
-                db = client[MONGO_CONNECTION['database']]
-                collection = db[MONGO_CONNECTION['collection']]
-                
-                # Add timestamp to each record
-                timestamp = datetime.now().isoformat()
-                for record in data_list:
-                    record['ingestion_timestamp'] = timestamp
-                
-                # Insert data
-                if data_list:
-                    result = collection.insert_many(data_list)
-                    logger.info(f"Successfully inserted {len(result.inserted_ids)} documents into MongoDB")
-                else:
-                    logger.warning("No data to insert into MongoDB")
-                
-                # Close connection
-                client.close()
-                break
-            except Exception as e:
-                logger.error(f"Error storing data to MongoDB: {str(e)}")
-                raise
+
+        try:
+            conn = get_mongo_connection()
+            db = conn['mldata']
+            collection = db['processed_data']
+            
+            timestamp = datetime.now().isoformat()
+            for record in data_list:
+                record['ingestion_timestamp'] = timestamp
+            
+            if data_list:
+                result = collection.insert_many(data_list)
+                logger.info(f"Successfully inserted {len(result.inserted_ids)} documents into MongoDB")
+            else:
+                logger.warning("No data to insert into MongoDB")
+        except Exception as e:
+            logger.error(f"Error storing data to MongoDB: {str(e)}")
+            raise
+        finally:
+            conn.close()
         
         return "Data successfully stored in MongoDB"
     
@@ -193,7 +158,6 @@ def store_to_mongodb(**kwargs):
         logger.error(error_msg)
         raise
 
-# Define tasks
 task_read_csv = PythonOperator(
     task_id='read_csv_file',
     python_callable=read_csv_file,
@@ -212,5 +176,4 @@ task_store_mongodb = PythonOperator(
     dag=dag,
 )
 
-# Define task dependencies
 task_read_csv >> task_preprocess >> task_store_mongodb
