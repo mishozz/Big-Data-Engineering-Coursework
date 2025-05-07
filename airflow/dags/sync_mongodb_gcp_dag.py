@@ -1,9 +1,5 @@
 from datetime import datetime, timedelta
 from airflow import DAG
-import sys
-from pprint import pprint
-pprint(sys.path)
-sys.path.append("/opt/airflow/plugins")
 from airflow.operators.python import PythonOperator
 from utils.gcp_utils import update_google_sheet
 from utils.gcp_utils import authenticate_google_sheets
@@ -39,9 +35,8 @@ dag = DAG(
 )
 
 def task_sync_mongo_to_gcp():
-    limit = 100
     conn = get_mongo_connection()
-    data = fetch_mongodb_data(conn=conn, limit=limit)
+    data = fetch_mongodb_data(conn=conn, db_name='salary_analytics', collection_name='salary_records')
     logger.info("authenticating with Google Sheets API")
     gcp = authenticate_google_sheets(GCP_CREDENTIALS_PATH)
     logger.info("Authenticated with Google Sheets API")

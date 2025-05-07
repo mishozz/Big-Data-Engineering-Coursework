@@ -44,23 +44,20 @@ def get_mongo_connection():
             raise
 
 
-def fetch_mongodb_data(conn, query=None, limit=None):
+def fetch_mongodb_data(conn, db_name, collection_name, query=None, limit=None):
     if query is None:
         query = {}
     
     try:
-        db = conn[MONGO_CONNECTION['database']]
-        collection = db[MONGO_CONNECTION['collection']]
+        db = conn[db_name]
+        collection = db[collection_name]
 
-        cursor = collection.find(query)
+        cursor = collection.find(query, {'_id': 0})
 
         if limit:
             cursor = cursor.limit(limit)
 
         results = list(cursor)
-        for doc in results:
-            if '_id' in doc:
-                doc['_id'] = str(doc['_id'])
 
         logger.info(f"Retrieved {len(results)} documents from MongoDB")
         return results
