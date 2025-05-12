@@ -1,44 +1,45 @@
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.decorators import dag, task
 from utils.mongodb_utils import get_mongo_connection
 import pandas as pd
 import logging
 import os
 
+# Setup logger
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Default DAG arguments
 default_args = {
     'owner': 'airflow',
-    'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
     'retries': 3,
     'retry_delay': timedelta(minutes=5),
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'depends_on_past': False,
 }
 
-dag = DAG(
-    'csv_ingestion_pipeline',
+@dag(
+    dag_id='csv_ingestion_pipeline',
     default_args=default_args,
     description='Ingest CSV data, process it, and store in MongoDB',
     start_date=datetime(2023, 10, 1),
     catchup=False,
     tags=['csv', 'mongodb', 'ml'],
 )
+def salary_pipeline():
 
-CSV_FILE_PATH = '/opt/airflow/data/Salary_Data.csv'
+    @task()
+    def read_csv_file():
+        CSV_FILE_PATH = '/opt/airflow/data/Salary_Data.csv'
+        if not os.path.exists(CSV_FILE_PATH):
+            error_msg = f"CSV file not found at: {CSV_FILE_PATH}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
 
-def read_csv_file(**kwargs):
-    if not os.path.exists(CSV_FILE_PATH):
-        error_msg = f"CSV file not found at: {CSV_FILE_PATH}"
-        logger.error(error_msg)
-        raise FileNotFoundError(error_msg)
-    
-    try:
         columns = [
             "Age", "Gender", "Education_Level", 
             "Job_Title", "Years_of_Experience", "Salary"
@@ -49,34 +50,21 @@ def read_csv_file(**kwargs):
         if df.iloc[0, 0] == "Age" and df.iloc[0, 5] == "Salary":
             df = df.iloc[1:]
             logger.info("Removed header row from CSV")
- 
+
         df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
         df["Years_of_Experience"] = pd.to_numeric(df["Years_of_Experience"], errors="coerce")
         df["Salary"] = pd.to_numeric(df["Salary"], errors="coerce")
-        
-        logger.info(f"Successfully read salary CSV with {len(df)} rows")
-        logger.info(f"Columns: {', '.join(df.columns)}")
-        
-        # Push the DataFrame to the next task via XCom
-        kwargs['ti'].xcom_push(key='raw_salary_data', value=df.to_json(orient='records'))
-        return "Salary CSV file read successfully"
-    except Exception as e:
-        error_msg = f"Unexpected error reading CSV file: {str(e)}"
-        logger.error(error_msg)
-        raise
 
-def preprocess_data(**kwargs):
-    """
-    Preprocess the salary data.
-    """
-    logger.info("Starting salary data preprocessing")
-    try:
-        ti = kwargs['ti']
-        json_data = ti.xcom_pull(task_ids='read_csv_file', key='raw_salary_data')
-        if json_data is None:
-            logger.error("No data found in XCom for task 'read_csv_file' with key 'raw_salary_data'")
-            raise ValueError("No data found in XCom")
-        df = pd.read_json(json_data)
+        return df.to_json(orient='records')
+
+    @task()
+    def preprocess_data(raw_data_json: str):
+        """
+        Preprocess the salary data.
+        """
+        logger.info("Starting salary data preprocessing")
+
+        df = pd.read_json(raw_data_json)
         
         logger.info(f"Preprocessing {len(df)} salary records")
         
@@ -107,29 +95,13 @@ def preprocess_data(**kwargs):
         df['processed_timestamp'] = datetime.now().isoformat()
         
         processed_data = df.to_json(orient='records')
-        kwargs['ti'].xcom_push(key='processed_salary_data', value=processed_data)
-        logger.info(f"Salary data preprocessing completed. Processed {len(df)} records.")
-        
-        return "Salary data preprocessing completed successfully"
-    
-    except Exception as e:
-        error_msg = f"Error during salary data preprocessing: {str(e)}"
-        logger.error(error_msg)
-        raise
+        return processed_data
 
-def analyze_data(**kwargs):
-    """
-    Perform analysis on the salary data.
-    """
-    logger.info("Starting salary data analysis")
-    
-    try:
-        # Get processed data from previous task
-        ti = kwargs['ti']
-        processed_data_json = ti.xcom_pull(task_ids='preprocess_data', key='processed_salary_data')
+    @task()
+    def analyze_data(processed_data_json: str):
+        logger.info("Starting salary data analysis")
         df = pd.read_json(processed_data_json)
-        
-        # Analysis results dictionary
+
         analysis_results = {}
         
         # 1. Gender-based salary analysis
@@ -152,25 +124,73 @@ def analyze_data(**kwargs):
         age_analysis = df.groupby('Age_Group')['Salary'].agg(['mean', 'median', 'count']).reset_index()
         analysis_results['age_salary_analysis'] = age_analysis.to_dict('records')
         
-        kwargs['ti'].xcom_push(key='salary_analysis_results', value=analysis_results)
-        return "Salary data analysis completed successfully"
-    
-    except Exception as e:
-        error_msg = f"Error during salary data analysis: {str(e)}"
-        logger.error(error_msg)
-        raise
+        return analysis_results
 
-def store_to_mongodb(**kwargs):
-    """
-    Store processed salary data and analysis results to MongoDB.
-    """
-    logger.info("Starting MongoDB storage task for salary data")
-    
-    try:
-        ti = kwargs['ti']
-        processed_data_json = ti.xcom_pull(task_ids='preprocess_data', key='processed_salary_data')
-        analysis_results = ti.xcom_pull(task_ids='analyze_data', key='salary_analysis_results')
-        
+    @task()
+    def train_salary_models(processed_data_json: str):
+        logger.info("Starting simplified ML model training")
+        from sklearn.model_selection import train_test_split
+        from sklearn.linear_model import LinearRegression
+        from sklearn.metrics import mean_squared_error, r2_score
+        import mlflow
+        import mlflow.sklearn
+        import numpy as np
+        logger.info("gathering data for model training")
+        df = pd.read_json(processed_data_json)
+
+        logger.info(f"Training simplified ML model on {len(df)} salary records")
+
+        feature_cols = ['Age', 'Years_of_Experience'] 
+        target_col = 'Salary'
+
+        X = df[feature_cols]
+        y = df[target_col]
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+        del df
+
+        model = LinearRegression()
+        os.environ["GIT_PYTHON_REFRESH"] = "quiet"
+        logger.info("Starting MLflow tracking")
+        mlflow.set_tracking_uri("http://mlflow:5500")
+        logger.info("MLflow tracking URI set")
+        mlflow.set_experiment("Salary_Prediction_Experiment")
+        with mlflow.start_run(run_name="LinearRegressionSalaryModel"):
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+
+            # Metrics
+            mse = mean_squared_error(y_test, y_pred)
+            rmse = np.sqrt(mse)
+            r2 = r2_score(y_test, y_pred)
+
+            logger.info(f"Linear Regression - RMSE: {rmse:.2f}, R²: {r2:.2f}")
+
+            # Log parameters
+            mlflow.log_param("model_type", "LinearRegression")
+            mlflow.log_param("features", feature_cols)
+            mlflow.log_param("test_size", 0.25)
+
+            # Log metrics
+            mlflow.log_metric("mse", mse)
+            mlflow.log_metric("rmse", rmse)
+            mlflow.log_metric("r2_score", r2)
+            input_example = pd.DataFrame({
+                'Age': [30],
+                'Years_of_Experience': [5]
+            })
+            # Log model
+            mlflow.sklearn.log_model(
+                sk_model=model,
+                artifact_path="linear_regression_model",
+                input_example=input_example
+            )
+
+        return "Model training completed and logged to MLflow"
+
+    @task()
+    def store_to_mongodb(processed_data_json: str, analysis_results: dict):
+        logger.info("Starting MongoDB storage task for salary data")
         data_list = pd.read_json(processed_data_json).to_dict('records')
         
         logger.info(f"Preparing to store {len(data_list)} salary records to MongoDB")
@@ -195,7 +215,6 @@ def store_to_mongodb(**kwargs):
             analysis_collection = db['salary_analysis']
             analysis_data = {
                 'timestamp': timestamp,
-                'run_id': kwargs.get('run_id', 'unknown'),
                 'results': analysis_results
             }
             analysis_collection.insert_one(analysis_data)
@@ -206,37 +225,16 @@ def store_to_mongodb(**kwargs):
             raise
         finally:
             if conn:
-                conn.close()
-        
+                conn.close() 
         return "Salary data successfully stored in MongoDB"
-    
-    except Exception as e:
-        error_msg = f"Failed to store salary data in MongoDB: {str(e)}"
-        logger.error(error_msg)
-        raise
 
-task_read_csv = PythonOperator(
-    task_id='read_csv_file',
-    python_callable=read_csv_file,
-    dag=dag,
-)
+    # Task dependencies using TaskFlow API
+    raw_data = read_csv_file()
+    processed_data = preprocess_data(raw_data)
+    analysis_results = analyze_data(processed_data)
+    _ = train_salary_models(processed_data)
+    store_to_mongodb(processed_data, analysis_results)
 
-task_preprocess = PythonOperator(
-    task_id='preprocess_data',
-    python_callable=preprocess_data,
-    dag=dag,
-)
+# Instantiate DAG
+dag = salary_pipeline()
 
-task_analyse_data = PythonOperator(
-    task_id='analyze_data',
-    python_callable=analyze_data,
-    dag=dag,
-)
-
-task_store_mongodb = PythonOperator(
-    task_id='store_to_mongodb',
-    python_callable=store_to_mongodb,
-    dag=dag,
-)
-
-task_read_csv >> task_preprocess >> task_analyse_data >> task_store_mongodb

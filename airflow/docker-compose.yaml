@@ -79,6 +79,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/secrets:/opt/airflow/secrets
+    - mlflow_data:/mlflow
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -135,6 +136,14 @@ services:
     restart: always
     networks:
       - ml_network
+    volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
+    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/secrets:/opt/airflow/secrets
+    - mlflow_data:/mlflow
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
@@ -200,6 +209,12 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 2g  # Set the maximum memory limit (e.g., 2GB)
+        reservations:
+          memory: 1g  # Reserve a minimum amount of memory (e.g., 1GB)
 
   airflow-triggerer:
     <<: *airflow-common
@@ -363,7 +378,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=minio_secret_key
     volumes:
       - mlflow_data:/mlflow
-    command: mlflow server --host 0.0.0.0 --port 5500 --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow
+    command: mlflow server --host 0.0.0.0 --port 5500 --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow && chmod -R 777 /mlflow
     networks:
       - ml_network
     healthcheck:
