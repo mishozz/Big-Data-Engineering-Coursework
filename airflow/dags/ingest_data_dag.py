@@ -5,14 +5,12 @@ import pandas as pd
 import logging
 import os
 
-# Setup logger
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Default DAG arguments
 default_args = {
     'owner': 'airflow',
     'retries': 3,
@@ -86,7 +84,6 @@ def salary_pipeline():
         salary_labels = ['Entry', 'Junior', 'Mid', 'Senior', 'Executive']
         df['Salary_Band'] = pd.cut(df['Salary'], bins=salary_ranges, labels=salary_labels)
         
-        # Create experience bands
         exp_ranges = [0, 2, 5, 10, 15, float('inf')]
         exp_labels = ['Entry', 'Junior', 'Mid', 'Senior', 'Expert']
         df['Experience_Level'] = pd.cut(df['Years_of_Experience'], bins=exp_ranges, labels=exp_labels)
@@ -103,23 +100,17 @@ def salary_pipeline():
         df = pd.read_json(processed_data_json)
 
         analysis_results = {}
-        
-        # 1. Gender-based salary analysis
         gender_analysis = df.groupby('Gender')['Salary'].agg(['mean', 'median', 'min', 'max', 'count']).reset_index()
         analysis_results['gender_salary_gap'] = gender_analysis.to_dict('records')
         
-        # 2. Education level impact on salary
         education_analysis = df.groupby('Education_Level')['Salary'].agg(['mean', 'median', 'min', 'max', 'count']).reset_index()
         analysis_results['education_salary_impact'] = education_analysis.to_dict('records')
         
-        # 3. Experience vs. salary correlation
         analysis_results['experience_salary_correlation'] = df[['Years_of_Experience', 'Salary']].corr().iloc[0, 1]
         
-        # 4. Top 5 highest paying job titles
         top_jobs = df.groupby('Job_Title')['Salary'].mean().nlargest(5).reset_index()
         analysis_results['top_paying_jobs'] = top_jobs.to_dict('records')
         
-        # 5. Age group analysis
         df['Age_Group'] = pd.cut(df['Age'], bins=[20, 30, 40, 50, 60, 100], labels=['20s', '30s', '40s', '50s', '60+'])
         age_analysis = df.groupby('Age_Group')['Salary'].agg(['mean', 'median', 'count']).reset_index()
         analysis_results['age_salary_analysis'] = age_analysis.to_dict('records')
@@ -159,19 +150,16 @@ def salary_pipeline():
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
 
-            # Metrics
             mse = mean_squared_error(y_test, y_pred)
             rmse = np.sqrt(mse)
             r2 = r2_score(y_test, y_pred)
 
             logger.info(f"Linear Regression - RMSE: {rmse:.2f}, R²: {r2:.2f}")
 
-            # Log parameters
             mlflow.log_param("model_type", "LinearRegression")
             mlflow.log_param("features", feature_cols)
             mlflow.log_param("test_size", 0.25)
 
-            # Log metrics
             mlflow.log_metric("mse", mse)
             mlflow.log_metric("rmse", rmse)
             mlflow.log_metric("r2_score", r2)
@@ -179,7 +167,6 @@ def salary_pipeline():
                 'Age': [30],
                 'Years_of_Experience': [5]
             })
-            # Log model
             mlflow.sklearn.log_model(
                 sk_model=model,
                 artifact_path="linear_regression_model",
@@ -228,13 +215,10 @@ def salary_pipeline():
                 conn.close() 
         return "Salary data successfully stored in MongoDB"
 
-    # Task dependencies using TaskFlow API
     raw_data = read_csv_file()
     processed_data = preprocess_data(raw_data)
     analysis_results = analyze_data(processed_data)
     _ = train_salary_models(processed_data)
     store_to_mongodb(processed_data, analysis_results)
 
-# Instantiate DAG
 dag = salary_pipeline()
-
