@@ -212,9 +212,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g  # Set the maximum memory limit (e.g., 2GB)
+          memory: 4g  # Set the maximum memory limit (e.g., 2GB)
         reservations:
-          memory: 1g  # Reserve a minimum amount of memory (e.g., 1GB)
+          memory: 3g  # Reserve a minimum amount of memory (e.g., 1GB)
 
   airflow-triggerer:
     <<: *airflow-common
